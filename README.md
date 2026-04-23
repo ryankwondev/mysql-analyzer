@@ -34,6 +34,9 @@ chmod +x mysql-analyzer.sh
 # 특정 DB만 분석
 ./mysql-analyzer.sh -h <host> -P <port> -u <user> -p <password> -d <db_name>
 
+# 개선 항목만 출력 (recommendations only)
+./mysql-analyzer.sh -h <host> -P <port> -u <user> -p <password> -r
+
 # 출력 파일 지정
 ./mysql-analyzer.sh -h <host> -P <port> -u <user> -p <password> -o my-report.md
 ```
@@ -48,6 +51,13 @@ chmod +x mysql-analyzer.sh
 | `-p` | 비밀번호 (필수) | — |
 | `-d` | 대상 DB (생략 시 전체 분석) | 전체 |
 | `-o` | 출력 파일명 | `mysql-analysis-YYYY-MM-DD.md` |
+| `-r` | 개선 항목만 출력 | 전체 분석 |
+
+### 분석 모드
+
+**전체 분석 (기본)**: 인스턴스 개요, DB별 쿼리 부하, 테이블 I/O, 인덱스, 쿼리, 테이블 구조, 락/대기, 튜닝 권장, InnoDB 상태, 비활성 DB — 모든 섹션 출력.
+
+**Recommendations Only (`-r`)**: 조치가 필요한 항목만 출력. 미사용/중복 인덱스, 풀스캔 쿼리, 디스크 정렬 유발 쿼리, 테이블 구조 문제, 서버 변수 튜닝 권장, 비활성 DB. 정보성 섹션은 스킵.
 
 ## 기능 자동 감지
 

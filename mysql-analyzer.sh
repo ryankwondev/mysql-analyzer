@@ -5,7 +5,7 @@ set -euo pipefail
 # mysql-analyzer.sh — MySQL Instance-Wide Performance Analyzer
 #
 # Usage:
-#   ./mysql-analyzer.sh -h <host> -P <port> -u <user> -p <password> [-d <db>] [-o <output>]
+#   ./mysql-analyzer.sh -h <host> -P <port> -u <user> -p <password> [-d <db>] [-o <output>] [-r]
 #
 # Options:
 #   -h  Host (required)
@@ -14,6 +14,7 @@ set -euo pipefail
 #   -p  Password (required)
 #   -d  Target database (optional, analyzes all if omitted)
 #   -o  Output file (default: mysql-analysis-YYYY-MM-DD.md)
+#   -r  Recommendations only (actionable items only, skip full data dump)
 #
 # Features auto-detected:
 #   - performance_schema
@@ -30,6 +31,7 @@ DB_USER=""
 DB_PASS=""
 TARGET_DB=""
 OUTPUT=""
+RECO_ONLY=0
 SYSTEM_DBS="'information_schema','performance_schema','mysql','sys','mysql_audit'"
 
 # ─── Feature flags ───────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ─── Parse args ──────────────────────────────────────────────────────────────
-while getopts "h:P:u:p:d:o:" opt; do
+while getopts "h:P:u:p:d:o:r" opt; do
   case $opt in
     h) DB_HOST="$OPTARG" ;;
     P) DB_PORT="$OPTARG" ;;
@@ -53,18 +55,23 @@ while getopts "h:P:u:p:d:o:" opt; do
     p) DB_PASS="$OPTARG" ;;
     d) TARGET_DB="$OPTARG" ;;
     o) OUTPUT="$OPTARG" ;;
-    *) echo "Usage: $0 -h <host> -P <port> -u <user> -p <password> [-d <db>] [-o <output>]"; exit 1 ;;
+    r) RECO_ONLY=1 ;;
+    *) echo "Usage: $0 -h <host> -P <port> -u <user> -p <password> [-d <db>] [-o <output>] [-r]"; exit 1 ;;
   esac
 done
 
 if [[ -z "$DB_HOST" || -z "$DB_USER" || -z "$DB_PASS" ]]; then
   echo -e "${RED}Error: -h, -u, -p are required${NC}"
-  echo "Usage: $0 -h <host> -P <port> -u <user> -p <password> [-d <db>] [-o <output>]"
+  echo "Usage: $0 -h <host> -P <port> -u <user> -p <password> [-d <db>] [-o <output>] [-r]"
   exit 1
 fi
 
 if [[ -z "$OUTPUT" ]]; then
-  OUTPUT="mysql-analysis-$(date +%Y-%m-%d).md"
+  if [[ $RECO_ONLY -eq 1 ]]; then
+    OUTPUT="mysql-recommendations-$(date +%Y-%m-%d).md"
+  else
+    OUTPUT="mysql-analysis-$(date +%Y-%m-%d).md"
+  fi
 fi
 
 # ─── MySQL wrapper ───────────────────────────────────────────────────────────
@@ -190,6 +197,9 @@ echo "> Generated: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "> Host: $DB_HOST:$DB_PORT"
 echo "> MySQL Version: $VERSION"
 echo "> Features: performance_schema=$(if [[ $HAS_PERF_SCHEMA -eq 1 ]]; then echo ON; else echo OFF; fi), sys=$(if [[ $HAS_SYS -eq 1 ]]; then echo ON; else echo OFF; fi), slow_log=$(if [[ $HAS_SLOW_LOG -eq 1 ]]; then echo ON; else echo OFF; fi)"
+if [[ $RECO_ONLY -eq 1 ]]; then
+  echo "> Mode: Recommendations Only"
+fi
 echo ""
 echo "---"
 echo ""
@@ -197,6 +207,7 @@ echo ""
 ###############################################################################
 # Section 1: Instance Overview
 ###############################################################################
+if [[ $RECO_ONLY -eq 0 ]]; then
 step "Analyzing instance overview..."
 
 echo "## 1. Instance Overview"
@@ -299,13 +310,13 @@ tsv_to_md "$RESULT"
 echo ""
 
 ok "Instance overview done"
-
+fi
 
 ###############################################################################
 # Section 2: Per-Database Query Load (performance_schema)
 ###############################################################################
 
-if [[ $HAS_PERF_SCHEMA -eq 1 ]]; then
+if [[ $HAS_PERF_SCHEMA -eq 1 && $RECO_ONLY -eq 0 ]]; then
   step "Analyzing per-database query load..."
 
   echo "## 2. Per-Database Query Load"
@@ -377,6 +388,7 @@ fi
 ###############################################################################
 # Section 3: Top Tables (instance-wide)
 ###############################################################################
+if [[ $RECO_ONLY -eq 0 ]]; then
 step "Analyzing top tables..."
 
 echo "## 3. Top Tables by Size (Instance-Wide)"
@@ -436,6 +448,7 @@ if [[ $HAS_PERF_SCHEMA -eq 1 ]]; then
 fi
 
 ok "Top tables done"
+fi
 
 
 ###############################################################################
@@ -490,6 +503,7 @@ analyze_indexes_for_db() {
     fi
     echo ""
 
+    if [[ $RECO_ONLY -eq 0 ]]; then
     # Per-table index I/O
     echo "#### Index I/O (Top 20 by read time)"
     echo ""
@@ -510,6 +524,7 @@ analyze_indexes_for_db() {
     ")
     tsv_to_md "$RESULT"
     echo ""
+    fi
   fi
 
   # Duplicate indexes (same first column)
@@ -543,7 +558,7 @@ analyze_indexes_for_db() {
   fi
   echo ""
 
-  # All indexes listing (limit to 100 for large DBs)
+  if [[ $RECO_ONLY -eq 0 ]]; then
   local idx_total
   idx_total=$(run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$escaped_db';")
   echo "#### All Indexes (total: $idx_total)"
@@ -567,6 +582,7 @@ analyze_indexes_for_db() {
   ")
   tsv_to_md "$RESULT"
   echo ""
+  fi
 }
 
 step "Analyzing indexes..."
@@ -625,6 +641,7 @@ analyze_queries_for_db() {
   echo "### Queries: \`$db\`"
   echo ""
 
+  if [[ $RECO_ONLY -eq 0 ]]; then
   # 5-1. Slowest queries by max time
   echo "#### Slowest Queries (by max execution time)"
   echo ""
@@ -644,6 +661,7 @@ analyze_queries_for_db() {
   ")
   tsv_to_md "$RESULT"
   echo ""
+  fi
 
   # 5-2. Queries with no index used
   echo "#### Queries Without Index (NO_INDEX_USED > 0)"
@@ -686,6 +704,7 @@ analyze_queries_for_db() {
   tsv_to_md "$RESULT"
   echo ""
 
+  if [[ $RECO_ONLY -eq 0 ]]; then
   # 5-4. Highest total time queries
   echo "#### Highest Total Time Queries"
   echo ""
@@ -704,6 +723,7 @@ analyze_queries_for_db() {
   ")
   tsv_to_md "$RESULT"
   echo ""
+  fi
 }
 
 if [[ $HAS_PERF_SCHEMA -eq 1 ]]; then
@@ -881,7 +901,7 @@ ok "Table structure analysis done"
 # Section 7: Lock & Wait Analysis
 ###############################################################################
 
-if [[ $HAS_PERF_SCHEMA -eq 1 ]]; then
+if [[ $HAS_PERF_SCHEMA -eq 1 && $RECO_ONLY -eq 0 ]]; then
   step "Analyzing locks and waits..."
   echo "## 7. Lock & Wait Analysis"
   echo ""
@@ -1088,6 +1108,7 @@ ok "Tuning recommendations done"
 ###############################################################################
 # Section 9: InnoDB Status Summary
 ###############################################################################
+if [[ $RECO_ONLY -eq 0 ]]; then
 step "Collecting InnoDB status..."
 echo "## 9. InnoDB Status Summary"
 echo ""
@@ -1144,6 +1165,7 @@ else
 fi
 
 ok "InnoDB status done"
+fi
 
 ###############################################################################
 # Section 10: Inactive Databases
